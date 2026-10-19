@@ -1,0 +1,36 @@
+# Local evaluation: docker compose up --build   ->   http://localhost:3000
+services:
+  app:
+    build: .
+    ports:
+      - "3000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://comparator:comparator@db:5432/comparator
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      SEED_DEMO: "true"
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_TEAM: ${STRIPE_PRICE_TEAM:-}
+      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+    volumes:
+      - data:/data          # demo data and local files to compare
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: comparator
+      POSTGRES_PASSWORD: comparator
+      POSTGRES_DB: comparator
+    volumes:
+      - pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U comparator"]
+      interval: 3s
+      retries: 20
+volumes:
+  data:
+  pg:

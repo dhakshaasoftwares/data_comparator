@@ -11,3 +11,4 @@ cryptography>=42
 pyjwt>=2.8
 httpx>=0.27
 python-multipart
+psycopg2-binary>=2.9  # PostgreSQL metadata store (docker-compose)

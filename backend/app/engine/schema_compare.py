@@ -111,7 +111,7 @@ def compare_schema(
         warnings = []
         if s_by[s].nullable and not t_by[t].nullable:
             warnings.append("Target column is NOT NULL but source allows NULLs")
-        if method in ("case_insensitive", "normalized"):
+        if method == "normalized":
             warnings.append(f"Column renamed: {s} -> {t}")
         columns.append(
             ColumnPair(

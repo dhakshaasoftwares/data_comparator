@@ -10,3 +10,4 @@ frontend/dist/
 .env
 *.duckdb
 *.duckdb.wal
+*.tsbuildinfo
