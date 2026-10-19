@@ -1,0 +1,12 @@
+# Database drivers. Install the ones you need (all are optional).
+oracledb>=2.0                 # Oracle (thin mode, no Oracle client required)
+snowflake-sqlalchemy>=1.6     # Snowflake
+databricks-sqlalchemy>=2.0    # Databricks SQL warehouses / clusters
+sqlalchemy-redshift>=0.8      # Amazon Redshift
+redshift_connector>=2.1
+pyhive[hive_pure_sasl]>=0.7   # Apache Hive / Spark Thrift Server
+sqlalchemy-bigquery>=1.11     # Google BigQuery
+teradatasqlalchemy>=20.0      # Teradata
+psycopg2-binary>=2.9          # PostgreSQL
+pymysql>=1.1                  # MySQL / MariaDB
+pyodbc>=5.1                   # SQL Server / Azure Synapse (needs the Microsoft ODBC driver)
