@@ -10,9 +10,12 @@ from contextlib import suppress
 from pathlib import Path
 
 from ..connectors import Connector, sandboxed_duckdb
+from ..connectors.errors import explain
 from ..settings import get_settings
 from .config import JobConfig, JobOptions, TablePair
 from .data_compare import ColumnPlan, compare_profiles, keyed_diff, keyless_diff, profileable, staged_profile
+from .insights import LEVEL_ORDER, error_insight, table_insights
+from .keys import detect_unique_key
 from .quality import run_rule
 from .schema_compare import compare_schema
 from .scoring import score_table, status_for
@@ -37,23 +40,37 @@ def compare_table(pair: TablePair, src: Connector, tgt: Connector, options: JobO
     result["schema"] = schema.to_dict()
     mapping = {c.source: c.target for c in schema.columns}
 
-    keys = list(pair.key_columns)
-    if keys:
-        missing = [k for k in keys if k not in mapping]
-        if missing:
-            raise ValueError(f"Key column(s) {', '.join(missing)} are not mapped to the target")
-    else:
-        keys = [k for k in src.get_primary_key(pair.source_table) if k in mapping]
-        if keys:
-            notes.append(f"Using source primary key: {', '.join(keys)}")
-    result["key_columns"] = keys
-
     counts = {
         "source": src.count_rows(pair.source_table, pair.source_filter),
         "target": tgt.count_rows(pair.target_table, pair.target_filter),
     }
     counts["difference"] = counts["target"] - counts["source"]
     result["counts"] = counts
+
+    keys = list(pair.key_columns)
+    result["key_source"] = "configured"
+    if keys:
+        missing = [k for k in keys if k not in mapping]
+        if missing:
+            raise ValueError(
+                f"Key column(s) {', '.join(missing)} are not mapped to the target. "
+                "Map them in 'Columns & keys' or choose other key columns."
+            )
+    else:
+        keys = [k for k in src.get_primary_key(pair.source_table) if k in mapping]
+        result["key_source"] = "primary_key"
+        if keys:
+            notes.append(f"Using the source primary key: {', '.join(keys)}")
+        elif options.mode == "full":
+            keys = detect_unique_key(
+                src, pair.source_table, list(mapping), schema.source_types, pair.source_filter, counts["source"]
+            )
+            result["key_source"] = "detected"
+            if keys:
+                notes.append(f"No primary key declared; detected '{keys[0]}' as a unique key in the source")
+        if not keys:
+            result["key_source"] = "none"
+    result["key_columns"] = keys
 
     plans = [
         ColumnPlan(
@@ -181,14 +198,18 @@ def run_job(config: JobConfig, src: Connector, tgt: Connector, progress: Progres
         try:
             table = compare_table(pair, src, tgt, options)
             table.update(score_table(table, options))
+            table["insights"] = table_insights(table, options)
         except Exception as exc:  # one broken table must not stop the others
+            message = str(exc).splitlines()[0][:500] if str(exc) else type(exc).__name__
             table = {
                 "source_table": pair.source_table,
                 "target_table": pair.target_table,
                 "status": "error",
                 "score": None,
-                "error": str(exc).splitlines()[0][:500],
+                "error": message,
+                "hint": explain(message),
             }
+            table["insights"] = [error_insight(table)]
         tables.append(table)
     if progress:
         progress(total, total, "")
@@ -214,5 +235,9 @@ def run_job(config: JobConfig, src: Connector, tgt: Connector, progress: Progres
             "source_rows": sum(t.get("counts", {}).get("source", 0) for t in tables),
             "target_rows": sum(t.get("counts", {}).get("target", 0) for t in tables),
         },
+        "insights": sorted(
+            (i for t in tables for i in t["insights"] if i["level"] != "info"),
+            key=lambda i: LEVEL_ORDER[i["level"]],
+        )[:25],
         "tables": tables,
     }

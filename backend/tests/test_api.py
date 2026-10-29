@@ -129,3 +129,30 @@ def test_viewer_cannot_edit(client):
     assert client.get("/api/jobs", headers=viewer).status_code == 200
     r = client.post("/api/connections", headers=viewer, json={"name": "x", "type": "files", "config": {}})
     assert r.status_code == 403
+
+
+def test_duplicate_recommend_and_detect_key(client):
+    r = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo1234"})
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
+    job = client.get("/api/jobs", headers=h).json()[-1]
+    copy = client.post(f"/api/jobs/{job['id']}/duplicate", headers=h).json()
+    assert copy["name"].endswith("(copy)") and copy["config"] == job["config"]
+    src, tgt = job["config"]["source_connection_id"], job["config"]["target_connection_id"]
+    rec = client.get(f"/api/preview/recommendations?source_connection_id={src}&target_connection_id={tgt}", headers=h)
+    assert rec.status_code == 200 and rec.json()["reasons"]
+    key = client.post(
+        "/api/preview/detect-key", headers=h, json={"source_connection_id": tgt, "source_table": "orders"}
+    )
+    assert key.json() == {"key_columns": ["order_id"], "how": "detected"}
+    bad = client.get(f"/api/connections/{src}/columns?table=NOPE", headers=h)
+    assert bad.status_code == 400 and "not found" in bad.json()["detail"]
+
+
+def test_run_reports_previous_score(client):
+    r = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "demo1234"})
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
+    job = client.get("/api/jobs", headers=h).json()[-1]
+    first = _wait(client, h, client.post(f"/api/jobs/{job['id']}/run", headers=h).json()["id"])
+    second = _wait(client, h, client.post(f"/api/jobs/{job['id']}/run", headers=h).json()["id"])
+    assert second["previous_score"] == first["score"]
+    assert second["result"]["insights"]

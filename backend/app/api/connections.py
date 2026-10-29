@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..connectors import CONNECTORS, ConnectorError, get_connector, secret_fields
+from ..connectors.errors import connector_http_error, explain
 from ..connectors.sql import SQLAlchemyConnector
 from ..db import Connection, Job, User, get_db
 from ..plans import enforce
@@ -143,10 +144,9 @@ def test_connection(body: TestIn, user: User = Depends(require("editor")), db: S
         connector.test()
         tables = connector.list_tables()
         return {"ok": True, "message": f"Connected. {len(tables)} table(s) visible.", "tables": tables[:500]}
-    except ConnectorError as exc:
-        return {"ok": False, "message": str(exc)}
     except Exception as exc:
-        return {"ok": False, "message": str(exc).splitlines()[0] if str(exc) else type(exc).__name__}
+        message = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        return {"ok": False, "message": message, "hint": explain(message)}
     finally:
         connector.close()
 
@@ -157,7 +157,7 @@ def list_tables(conn_id: int, user: User = Depends(current_user), db: Session = 
     try:
         return connector.list_tables()
     except ConnectorError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise connector_http_error(exc) from exc
     finally:
         connector.close()
 
@@ -170,6 +170,6 @@ def list_columns(conn_id: int, table: str, user: User = Depends(current_user), d
         pk = connector.get_primary_key(table)
         return {"columns": [asdict(c) for c in cols], "primary_key": pk}
     except ConnectorError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise connector_http_error(exc) from exc
     finally:
         connector.close()

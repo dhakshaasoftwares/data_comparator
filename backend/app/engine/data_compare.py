@@ -102,10 +102,54 @@ class ColumnPlan:
         da, db = f"CAST({a} AS DOUBLE)", f"CAST({b} AS DOUBLE)"
         conds = [exact]
         if tol > 0:
-            conds.append(f"abs({da} - {db}) <= {float(tol)!r}")
+            conds.append(f"abs({da} - {db}) <= {float(tol) * (1 + 1e-9) + 1e-12!r}")  # absorb float error
         if self.float_like:
             conds.append(f"abs({da} - {db}) <= 1e-6 * greatest(abs({da}), abs({db}))")
         return "(" + " OR ".join(conds) + ")"
+
+    @staticmethod
+    def _half_step(scale: int | None) -> str:
+        return repr(0.5 * 10.0 ** -(scale or 0) * (1 + 1e-9)) if scale is not None else "1e-9"
+
+    def pattern(self, a: str, b: str) -> str:
+        """SQL CASE naming *why* two differing values differ (used for insights)."""
+        f = self.family
+        whens = [
+            f"WHEN {a} IS NOT NULL AND {b} IS NULL THEN 'null_in_target'",
+            f"WHEN {a} IS NULL AND {b} IS NOT NULL THEN 'null_in_source'",
+        ]
+        if f == Family.STRING:
+            sa, sb = f"CAST({a} AS VARCHAR)", f"CAST({b} AS VARCHAR)"
+            whens += [
+                f"WHEN lower({sa}) = lower({sb}) THEN 'case_only'",
+                f"WHEN regexp_replace({sa}, '\\s+', '', 'g') = regexp_replace({sb}, '\\s+', '', 'g') "
+                "THEN 'whitespace_only'",
+                f"WHEN length({sb}) < length({sa}) AND starts_with({sa}, {sb}) THEN 'truncated'",
+            ]
+        elif f in NUMERIC_FAMILIES:
+            da, db = f"CAST({a} AS DOUBLE)", f"CAST({b} AS DOUBLE)"
+            scale = self.t_type.scale if self.t_type.family == Family.DECIMAL else None
+            if self.t_type.family == Family.INTEGER:
+                scale = 0
+            # sign first: a negated value may also be rounded
+            whens.append(
+                f"WHEN sign({da}) = -sign({db}) AND abs(abs({da}) - abs({db})) <= {self._half_step(scale)} "
+                "THEN 'sign_flip'"
+            )
+            if scale is not None:
+                # within half a step of the target scale = rounding (any rounding mode)
+                whens.append(f"WHEN abs({da} - {db}) <= {self._half_step(scale)} THEN 'rounding'")
+            whens += [
+                f"WHEN abs({da} - {db}) <= 1e-6 * greatest(abs({da}), abs({db})) THEN 'precision'",
+            ]
+        elif f == Family.TIMESTAMP:
+            secs = f"(epoch_us({a}) - epoch_us({b})) / 1000000.0"
+            whens += [
+                f"WHEN date_trunc('second', {a}) = date_trunc('second', {b}) THEN 'sub_second'",
+                f"WHEN CAST({a} AS DATE) = CAST({b} AS DATE) AND CAST({b} AS TIME) = TIME '00:00:00' THEN 'time_lost'",
+                f"WHEN abs({secs}) <= 50400 AND {secs} % 1800 = 0 THEN 'timezone_shift'",
+            ]
+        return "CASE " + " ".join(whens) + " ELSE 'other' END"
 
 
 def _count(duck, sql: str) -> int:
@@ -177,6 +221,21 @@ def keyed_diff(
                 "mismatch_pct": round(100.0 * per_col[i] / matched, 4) if matched else 0.0,
             }
         )
+
+    # Classify why values differ, per column (feeds the plain-language insights).
+    for i, p in enumerate(non_keys):
+        if not per_col[i]:
+            continue
+        numeric = p.family in NUMERIC_FAMILIES
+        gap = f"max(abs(CAST(sc{i} AS DOUBLE) - CAST(tc{i} AS DOUBLE)))" if numeric else "NULL"
+        rows = duck.execute(
+            f"SELECT {p.pattern(f'sc{i}', f'tc{i}')} AS pat, count(*), {gap} FROM diff WHERE m{i} = 1 "
+            "GROUP BY pat ORDER BY count(*) DESC"
+        ).fetchall()
+        columns[i]["patterns"] = [
+            {"pattern": pat, "count": int(n), **({"max_abs_difference": jsonable(g)} if numeric else {})}
+            for pat, n, g in rows
+        ]
 
     key_names = [k.source for k in keys]
     sample_cols = non_keys[:MAX_SAMPLE_COLUMNS]

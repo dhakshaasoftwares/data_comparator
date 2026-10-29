@@ -10,9 +10,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..connectors import ConnectorError
+from ..connectors.errors import connector_http_error
 from ..db import Connection, Job, Run, UsageRecord, User, get_db
 from ..engine.config import ColumnMapping, JobConfig
+from ..engine.keys import detect_unique_key
+from ..engine.recommend import recommend
 from ..engine.schema_compare import compare_schema
+from ..engine.types import parse_type
 from ..plans import Plan, enforce
 from ..services import connector_for, submit_run
 from .deps import current_user, org_plan, require
@@ -87,6 +91,16 @@ def run_out(r: Run, full: bool = False) -> dict:
     return out
 
 
+def previous_score(db: Session, run: Run) -> float | None:
+    """Score of the job's completed run before ``run``, to show the trend."""
+    return db.scalar(
+        select(Run.score)
+        .where(Run.job_id == run.job_id, Run.id < run.id, Run.status == "completed")
+        .order_by(Run.id.desc())
+        .limit(1)
+    )
+
+
 def job_out(j: Job, last: Run | None = None) -> dict:
     return {
         "id": j.id,
@@ -114,7 +128,14 @@ def _last_run(db: Session, job_id: int) -> Run | None:
 @router.get("/jobs")
 def list_jobs(user: User = Depends(current_user), db: Session = Depends(get_db)):
     jobs = db.scalars(select(Job).where(Job.organization_id == user.organization_id).order_by(Job.updated_at.desc()))
-    return [job_out(j, _last_run(db, j.id)) for j in jobs]
+    out = []
+    for j in jobs:
+        last = _last_run(db, j.id)
+        item = job_out(j, last)
+        if last is not None:
+            item["last_run"]["previous_score"] = previous_score(db, last)
+        out.append(item)
+    return out
 
 
 @router.post("/jobs")
@@ -203,7 +224,7 @@ def preview_schema(body: PreviewIn, user: User = Depends(current_user), db: Sess
             "target_columns": [c.name for c in t_cols],
         }
     except ConnectorError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise connector_http_error(exc) from exc
     finally:
         src.close()
         tgt.close()
@@ -223,7 +244,7 @@ def auto_pair(body: AutoPairIn, user: User = Depends(current_user), db: Session 
     try:
         s_tables, t_tables = src.list_tables(), tgt.list_tables()
     except ConnectorError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise connector_http_error(exc) from exc
     finally:
         src.close()
         tgt.close()
@@ -252,7 +273,7 @@ def get_run(run_id: int, user: User = Depends(current_user), db: Session = Depen
     run = db.get(Run, run_id)
     if run is None or run.organization_id != user.organization_id:
         raise HTTPException(404, "Run not found")
-    return run_out(run, full=True)
+    return {**run_out(run, full=True), "previous_score": previous_score(db, run)}
 
 
 @router.delete("/runs/{run_id}")
@@ -265,3 +286,57 @@ def delete_run(run_id: int, user: User = Depends(require("editor")), db: Session
     db.delete(run)
     db.commit()
     return {"ok": True}
+
+
+class DetectKeyIn(BaseModel):
+    source_connection_id: int
+    source_table: str
+    source_filter: str | None = None
+
+
+@router.post("/preview/detect-key")
+def detect_key(body: DetectKeyIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Primary key, or a column that is unique and never NULL (one aggregate query in the source)."""
+    src = connector_for(_conn(db, user, body.source_connection_id))
+    try:
+        pk = src.get_primary_key(body.source_table)
+        if pk:
+            return {"key_columns": pk, "how": "primary_key"}
+        cols = src.get_columns(body.source_table)
+        types = {c.name: parse_type(c.native_type, src.dialect) for c in cols}
+        found = detect_unique_key(src, body.source_table, [c.name for c in cols], types, body.source_filter)
+        return {"key_columns": found, "how": "detected" if found else "none"}
+    except ConnectorError as exc:
+        raise connector_http_error(exc) from exc
+    finally:
+        src.close()
+
+
+@router.get("/preview/recommendations")
+def recommendations(
+    source_connection_id: int,
+    target_connection_id: int,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    src = connector_for(_conn(db, user, source_connection_id))
+    tgt = connector_for(_conn(db, user, target_connection_id))
+    return recommend(src.dialect, tgt.dialect)
+
+
+@router.post("/jobs/{job_id}/duplicate")
+def duplicate_job(job_id: int, user: User = Depends(require("editor")), db: Session = Depends(get_db)):
+    job = _get_job(db, user, job_id)
+    _, plan = org_plan(db, user)
+    count = db.scalar(select(func.count()).select_from(Job).where(Job.organization_id == user.organization_id)) or 0
+    enforce(plan.max_jobs, count, "jobs")
+    copy = Job(
+        organization_id=user.organization_id,
+        name=f"{job.name} (copy)",
+        description=job.description,
+        config=job.config,
+        created_by=user.id,
+    )
+    db.add(copy)
+    db.commit()
+    return job_out(copy)

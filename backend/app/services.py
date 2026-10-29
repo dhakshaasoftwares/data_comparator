@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .connectors import Connector, get_connector
+from .connectors.errors import explain
 from .db import Connection, Organization, Run, SessionLocal, UsageRecord, utcnow
 from .engine.config import JobConfig
 from .engine.runner import run_job
@@ -89,7 +90,9 @@ def execute_run(run_id: int) -> None:
         run = db.get(Run, run_id)
         if run is not None:
             run.status = "failed"
-            run.error = str(exc).splitlines()[0][:1000] if str(exc) else type(exc).__name__
+            message = str(exc).splitlines()[0][:1000] if str(exc) else type(exc).__name__
+            hint = explain(message)
+            run.error = f"{message}. {hint}" if hint else message
     finally:
         for c in (src, tgt):
             if c is not None:

@@ -11,7 +11,7 @@ os.environ.update(
         "DATA_ROOT": str(_TMP / "data"),
         "WORK_DIR": str(_TMP / "work"),
         "SEED_DEMO": "true",
-        "SECRET_KEY": "test-secret",
+        "SECRET_KEY": "test-secret-key-that-is-long-enough-for-hs256",
     }
 )
 

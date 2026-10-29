@@ -105,6 +105,8 @@ class SQLAlchemyConnector(Connector):
             cols = sa.inspect(self.engine).get_columns(name, schema=schema or self.default_schema())
         except ConnectorError:
             raise
+        except sa.exc.NoSuchTableError as exc:
+            raise ConnectorError(f"Table {table} not found") from exc
         except Exception as exc:
             raise ConnectorError(f"Cannot read columns of {table}: {str(exc).splitlines()[0]}") from exc
         if not cols:
