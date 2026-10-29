@@ -116,7 +116,11 @@ export default function Billing() {
         {d.plans.map((plan) => {
           const current = plan.id === p.id;
           return (
-            <div key={plan.id} className="card stack" style={{ gap: 10, borderColor: current ? "var(--accent)" : undefined }}>
+            <div
+              key={plan.id}
+              className="card stack"
+              style={{ gap: 10, borderColor: current ? "var(--accent)" : undefined }}
+            >
               <div>
                 <h2 style={{ marginBottom: 2 }}>{plan.name}</h2>
                 <div className="muted small">{plan.tagline}</div>
@@ -146,7 +150,11 @@ export default function Billing() {
                   </a>
                 ) : (
                   isAdmin && (
-                    <button className={plan.id === "team" ? "primary" : ""} onClick={() => choose(plan)} disabled={busy !== null}>
+                    <button
+                      className={plan.id === "team" ? "primary" : ""}
+                      onClick={() => choose(plan)}
+                      disabled={busy !== null}
+                    >
                       {busy === plan.id ? "Please wait…" : d.billing_enabled ? "Subscribe" : `Switch to ${plan.name}`}
                     </button>
                   )

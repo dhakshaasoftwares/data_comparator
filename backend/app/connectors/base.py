@@ -24,6 +24,7 @@ class ConfigField:
     help: str = ""
     options: list[str] = field(default_factory=list)
     secret: bool = False  # encrypted at rest, never returned by the API
+    advanced: bool = False  # shown under "Advanced / cloud credentials" in the UI
 
 
 @dataclass

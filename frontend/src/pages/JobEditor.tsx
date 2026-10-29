@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   api,
@@ -11,7 +11,7 @@ import {
   type TablePair,
 } from "../api";
 import { useAuth } from "../auth";
-import { ErrorBox, Loading, StatusPill, useData } from "../components/ui";
+import { ErrorBox, Help, Loading, StatusPill, useData, useToast } from "../components/ui";
 
 const STEPS = ["Source & target", "Columns & keys", "Quality rules", "Options & scoring", "Config (JSON)"];
 
@@ -44,7 +44,11 @@ const RULE_TYPES: { type: QualityRule["type"]; label: string; help: string }[] =
   { type: "regex", label: "Pattern (regex)", help: "Whole value must match the regular expression" },
   { type: "allowed_values", label: "Allowed values", help: "Value must be one of a list" },
   { type: "max_length", label: "Max length", help: "Text no longer than N characters" },
-  { type: "expression", label: "SQL expression", help: "Boolean SQL that is true for valid rows, e.g. end_date >= start_date" },
+  {
+    type: "expression",
+    label: "SQL expression",
+    help: "Boolean SQL that is true for valid rows, e.g. end_date >= start_date",
+  },
 ];
 
 const newRule = (): QualityRule => ({
@@ -61,13 +65,15 @@ function blankConfig(): JobConfig {
 
 // ---------------------------------------------------------------------------
 
+type ConfigSetter = (next: JobConfig | ((c: JobConfig) => JobConfig)) => void;
+
 function StepTables({
   config,
   setConfig,
   conns,
 }: {
   config: JobConfig;
-  setConfig: (c: JobConfig) => void;
+  setConfig: ConfigSetter;
   conns: ConnectionT[];
 }) {
   const [srcTables, setSrcTables] = useState<string[]>([]);
@@ -75,6 +81,7 @@ function StepTables({
   const [error, setError] = useState<unknown>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     setSrcTables([]);
@@ -90,21 +97,30 @@ function StepTables({
   const setPair = (i: number, patch: Partial<TablePair>) =>
     setConfig({ ...config, tables: config.tables.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
 
-  const autoPair = async () => {
+  const autoPair = async (replace = false) => {
     setBusy(true);
     setError(null);
+    setStale(false);
     try {
       const res = await api<{ pairs: TablePair[]; unmatched_source: string[]; unmatched_target: string[] }>(
         "/preview/auto-pair",
-        { body: { source_connection_id: config.source_connection_id, target_connection_id: config.target_connection_id } },
+        {
+          body: {
+            source_connection_id: config.source_connection_id,
+            target_connection_id: config.target_connection_id,
+          },
+        },
       );
-      const existing = new Set(config.tables.map((t) => `${t.source_table}|${t.target_table}`));
+      const current = replace ? [] : config.tables;
+      const existing = new Set(current.map((t) => `${t.source_table}|${t.target_table}`));
       const added = res.pairs
         .filter((p) => !existing.has(`${p.source_table}|${p.target_table}`))
         .map((p) => emptyPair(p.source_table, p.target_table));
-      setConfig({ ...config, tables: [...config.tables, ...added] });
+      setConfig((c) => ({ ...c, tables: [...(replace ? [] : c.tables), ...added] }));
       setNote(
-        `Added ${added.length} table pair(s).` +
+        (added.length
+          ? `Matched ${added.length} table(s) by name. Remove any you do not need, or add pairs whose names differ.`
+          : "No new tables with matching names were found; add table pairs manually.") +
           (res.unmatched_source.length ? ` No target match for: ${res.unmatched_source.slice(0, 10).join(", ")}.` : ""),
       );
     } catch (e) {
@@ -114,10 +130,30 @@ function StepTables({
     }
   };
 
+  // New comparison: pair tables by name as soon as both sides are chosen.
+  const autoTried = useRef("");
+  useEffect(() => {
+    const k = `${config.source_connection_id}-${config.target_connection_id}`;
+    if (
+      config.source_connection_id &&
+      config.target_connection_id &&
+      !config.tables.length &&
+      autoTried.current !== k
+    ) {
+      autoTried.current = k;
+      autoPair();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.source_connection_id, config.target_connection_id]);
+
   const connSelect = (key: "source_connection_id" | "target_connection_id") => (
     <select
       value={config[key] || ""}
-      onChange={(e) => setConfig({ ...config, [key]: Number(e.target.value) })}
+      onChange={(e) => {
+        const value = Number(e.target.value);
+        setConfig((c) => ({ ...c, [key]: value }));
+        if (config.tables.length) setStale(true);
+      }}
       required
     >
       <option value="">Select a connection…</option>
@@ -142,14 +178,22 @@ function StepTables({
         </label>
       </div>
       <ErrorBox error={error} />
-      {note && <div className="alert ok">{note}</div>}
+      {stale && config.source_connection_id > 0 && config.target_connection_id > 0 && (
+        <div className="alert warn banner">
+          <span>You changed a connection. The table names below may not exist there any more.</span>
+          <button type="button" className="small" onClick={() => autoPair(true)} disabled={busy}>
+            Replace with tables matched by name
+          </button>
+        </div>
+      )}
+      {note && !stale && <div className="alert ok">{note}</div>}
       <div className="card flush">
         <div className="card-head" style={{ padding: "14px 16px 0" }}>
           <h2>Tables to compare ({config.tables.length})</h2>
           <div className="row">
             <button
               type="button"
-              onClick={autoPair}
+              onClick={() => autoPair()}
               disabled={busy || !config.source_connection_id || !config.target_connection_id}
             >
               Auto-pair all tables by name
@@ -184,12 +228,22 @@ function StepTables({
               {config.tables.map((t, i) => (
                 <tr key={i}>
                   <td>
-                    <input list="src-tables" value={t.source_table} placeholder="schema.table" onChange={(e) => setPair(i, { source_table: e.target.value })} />
+                    <input
+                      list="src-tables"
+                      value={t.source_table}
+                      placeholder="schema.table"
+                      onChange={(e) => setPair(i, { source_table: e.target.value })}
+                    />
                   </td>
                   <td>
-                    <input list="tgt-tables" value={t.target_table} placeholder="schema.table" onChange={(e) => setPair(i, { target_table: e.target.value })} />
+                    <input
+                      list="tgt-tables"
+                      value={t.target_table}
+                      placeholder="schema.table"
+                      onChange={(e) => setPair(i, { target_table: e.target.value })}
+                    />
                   </td>
-                  <td className="ink-2 small">{t.key_columns.join(", ") || "auto (primary key)"}</td>
+                  <td className="ink-2 small">{t.key_columns.join(", ") || "automatic"}</td>
                   <td className="num">{t.rules.length}</td>
                   <td className="r">
                     <button
@@ -247,13 +301,18 @@ function StepColumns({
   setIndex: (i: number) => void;
 }) {
   const pair = config.tables[index];
+  const toast = useToast();
+  const [detecting, setDetecting] = useState(false);
   const [preview, setPreview] = useState<SchemaPreview | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
-  const deps = pair ? JSON.stringify([pair.source_table, pair.target_table, pair.column_mappings, pair.exclude_columns]) : "";
+  const deps = pair
+    ? JSON.stringify([pair.source_table, pair.target_table, pair.column_mappings, pair.exclude_columns])
+    : "";
   useEffect(() => {
-    if (!pair?.source_table || !pair?.target_table || !config.source_connection_id || !config.target_connection_id) return;
+    if (!pair?.source_table || !pair?.target_table || !config.source_connection_id || !config.target_connection_id)
+      return;
     setLoading(true);
     api<SchemaPreview>("/preview/schema", {
       body: {
@@ -275,13 +334,39 @@ function StepColumns({
 
   if (!pair) return <PairPicker config={config} index={index} setIndex={setIndex} />;
 
+  const detectKey = async () => {
+    setDetecting(true);
+    try {
+      const r = await api<{ key_columns: string[] }>("/preview/detect-key", {
+        body: {
+          source_connection_id: config.source_connection_id,
+          source_table: pair.source_table,
+          source_filter: pair.source_filter,
+        },
+      });
+      if (r.key_columns.length) {
+        setPair(index, { key_columns: r.key_columns });
+        toast(`Key column: ${r.key_columns.join(", ")} (unique in the source)`);
+      } else toast("No single column is unique. Tick the columns that together identify a row.", "error");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setDetecting(false);
+    }
+  };
+
   const toggleKey = (col: string) =>
     setPair(index, {
-      key_columns: pair.key_columns.includes(col) ? pair.key_columns.filter((k) => k !== col) : [...pair.key_columns, col],
+      key_columns: pair.key_columns.includes(col)
+        ? pair.key_columns.filter((k) => k !== col)
+        : [...pair.key_columns, col],
     });
   const remap = (source: string, target: string) =>
     setPair(index, {
-      column_mappings: [...pair.column_mappings.filter((m) => m.source !== source), ...(target ? [{ source, target }] : [])],
+      column_mappings: [
+        ...pair.column_mappings.filter((m) => m.source !== source),
+        ...(target ? [{ source, target }] : []),
+      ],
     });
 
   return (
@@ -298,8 +383,17 @@ function StepColumns({
             <span className="chip">{preview.summary.missing_in_target} missing in target</span>
             <span className="chip">{preview.summary.extra_in_target} extra in target</span>
             {!pair.key_columns.length && preview.suggested_keys.length > 0 && (
-              <button type="button" className="small" onClick={() => setPair(index, { key_columns: preview.suggested_keys })}>
+              <button
+                type="button"
+                className="small"
+                onClick={() => setPair(index, { key_columns: preview.suggested_keys })}
+              >
                 Use primary key: {preview.suggested_keys.join(", ")}
+              </button>
+            )}
+            {!pair.key_columns.length && !preview.suggested_keys.length && (
+              <button type="button" className="small" onClick={detectKey} disabled={detecting}>
+                {detecting ? "Looking for a unique column…" : "Detect key column"}
               </button>
             )}
           </div>
@@ -308,12 +402,18 @@ function StepColumns({
               <table>
                 <thead>
                   <tr>
-                    <th>Key</th>
+                    <th>
+                      Key
+                      <Help text="Key columns identify the same row in both tables (e.g. ORDER_ID). Leave empty and the run uses the primary key or detects a unique column automatically." />
+                    </th>
                     <th>Source column</th>
                     <th>Source type</th>
                     <th>Target column</th>
                     <th>Target type</th>
-                    <th>Compatibility</th>
+                    <th>
+                      Compatibility
+                      <Help text="Safe: every source value fits. Lossy: some values may be rounded, truncated or lose time zone. Incompatible: the target type cannot hold the data." />
+                    </th>
                     <th />
                   </tr>
                 </thead>
@@ -333,7 +433,11 @@ function StepColumns({
                       </td>
                       <td className="mono ink-2">{c.source_type}</td>
                       <td>
-                        <select value={c.target} onChange={(e) => remap(c.source, e.target.value)} style={{ minWidth: 140 }}>
+                        <select
+                          value={c.target}
+                          onChange={(e) => remap(c.source, e.target.value)}
+                          style={{ minWidth: 140 }}
+                        >
                           {preview.target_columns.map((t) => (
                             <option key={t}>{t}</option>
                           ))}
@@ -450,7 +554,15 @@ function StepColumns({
 
 // ---------------------------------------------------------------------------
 
-function RuleEditor({ rule, onChange, onRemove }: { rule: QualityRule; onChange: (r: QualityRule) => void; onRemove: () => void }) {
+function RuleEditor({
+  rule,
+  onChange,
+  onRemove,
+}: {
+  rule: QualityRule;
+  onChange: (r: QualityRule) => void;
+  onRemove: () => void;
+}) {
   const set = (patch: Partial<QualityRule>) => onChange({ ...rule, ...patch });
   const meta = RULE_TYPES.find((r) => r.type === rule.type)!;
   return (
@@ -469,7 +581,11 @@ function RuleEditor({ rule, onChange, onRemove }: { rule: QualityRule; onChange:
         {rule.type === "expression" ? (
           <label className="field" style={{ gridColumn: "span 2" }}>
             Expression
-            <input className="mono" value={rule.expression || ""} onChange={(e) => set({ expression: e.target.value })} />
+            <input
+              className="mono"
+              value={rule.expression || ""}
+              onChange={(e) => set({ expression: e.target.value })}
+            />
           </label>
         ) : (
           <label className="field">
@@ -480,7 +596,13 @@ function RuleEditor({ rule, onChange, onRemove }: { rule: QualityRule; onChange:
               onChange={(e) => {
                 const v = e.target.value;
                 if (rule.type === "unique" && v.includes(","))
-                  set({ columns: v.split(",").map((s) => s.trim()).filter(Boolean), column: null });
+                  set({
+                    columns: v
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                    column: null,
+                  });
                 else set({ column: v, columns: [] });
               }}
             />
@@ -490,11 +612,19 @@ function RuleEditor({ rule, onChange, onRemove }: { rule: QualityRule; onChange:
           <>
             <label className="field">
               Min
-              <input type="number" value={rule.min ?? ""} onChange={(e) => set({ min: e.target.value === "" ? null : Number(e.target.value) })} />
+              <input
+                type="number"
+                value={rule.min ?? ""}
+                onChange={(e) => set({ min: e.target.value === "" ? null : Number(e.target.value) })}
+              />
             </label>
             <label className="field">
               Max
-              <input type="number" value={rule.max ?? ""} onChange={(e) => set({ max: e.target.value === "" ? null : Number(e.target.value) })} />
+              <input
+                type="number"
+                value={rule.max ?? ""}
+                onChange={(e) => set({ max: e.target.value === "" ? null : Number(e.target.value) })}
+              />
             </label>
           </>
         )}
@@ -509,7 +639,14 @@ function RuleEditor({ rule, onChange, onRemove }: { rule: QualityRule; onChange:
             Values (comma separated)
             <input
               value={(rule.values || []).join(", ")}
-              onChange={(e) => set({ values: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+              onChange={(e) =>
+                set({
+                  values: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
             />
           </label>
         )}
@@ -574,7 +711,10 @@ function StepRules({
     if (!pair?.target_table || !config.target_connection_id) return;
     api<{ columns: { name: string }[] }>(
       `/connections/${config.target_connection_id}/columns?table=${encodeURIComponent(pair.target_table)}`,
-    ).then((r) => setCols(r.columns.map((c) => c.name)), () => setCols([]));
+    ).then(
+      (r) => setCols(r.columns.map((c) => c.name)),
+      () => setCols([]),
+    );
   }, [pair?.target_table, config.target_connection_id]);
 
   if (!pair) return <PairPicker config={config} index={index} setIndex={setIndex} />;
@@ -612,8 +752,16 @@ function StepOptions({ config, setConfig }: { config: JobConfig; setConfig: (c: 
   const set = (patch: Partial<typeof o>) => setConfig({ ...config, options: { ...o, ...patch } });
   const setNorm = (patch: Partial<typeof o.normalization>) => set({ normalization: { ...o.normalization, ...patch } });
   const modes = [
-    ["counts", "Schema + row counts", "Fastest. Nothing but metadata and COUNT(*) queries; no data leaves the engines."],
-    ["profile", "Column statistics", "Nulls, distinct, min, max and sum per column, computed inside each engine (pushdown)."],
+    [
+      "counts",
+      "Schema + row counts",
+      "Fastest. Nothing but metadata and COUNT(*) queries; no data leaves the engines.",
+    ],
+    [
+      "profile",
+      "Column statistics",
+      "Nulls, distinct, min, max and sum per column, computed inside each engine (pushdown).",
+    ],
     ["full", "Row-level diff", "Matches every row by key and compares values. Large tables are sampled by key range."],
   ] as const;
   const totalW = o.weights.completeness + o.weights.accuracy + o.weights.schema + o.weights.quality;
@@ -623,7 +771,11 @@ function StepOptions({ config, setConfig }: { config: JobConfig; setConfig: (c: 
         <h2>Comparison depth</h2>
         <div className="grid cols-3">
           {modes.map(([value, label, help]) => (
-            <label key={value} className="card" style={{ cursor: "pointer", borderColor: o.mode === value ? "var(--accent)" : undefined }}>
+            <label
+              key={value}
+              className="card"
+              style={{ cursor: "pointer", borderColor: o.mode === value ? "var(--accent)" : undefined }}
+            >
               <span className="check">
                 <input type="radio" name="mode" checked={o.mode === value} onChange={() => set({ mode: value })} />
                 <b>{label}</b>
@@ -648,7 +800,13 @@ function StepOptions({ config, setConfig }: { config: JobConfig; setConfig: (c: 
           </label>
           <label className="field">
             Mismatch examples to keep
-            <input type="number" min={0} max={500} value={o.sample_size} onChange={(e) => set({ sample_size: Number(e.target.value) })} />
+            <input
+              type="number"
+              min={0}
+              max={500}
+              value={o.sample_size}
+              onChange={(e) => set({ sample_size: Number(e.target.value) })}
+            />
           </label>
         </div>
       </div>
@@ -656,7 +814,11 @@ function StepOptions({ config, setConfig }: { config: JobConfig; setConfig: (c: 
         <h2>Normalisation (what counts as “the same”)</h2>
         <div className="form-grid">
           <label className="check">
-            <input type="checkbox" checked={o.normalization.trim_strings} onChange={(e) => setNorm({ trim_strings: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={o.normalization.trim_strings}
+              onChange={(e) => setNorm({ trim_strings: e.target.checked })}
+            />
             Ignore leading/trailing spaces (CHAR padding)
           </label>
           <label className="check">
@@ -690,7 +852,9 @@ function StepOptions({ config, setConfig }: { config: JobConfig; setConfig: (c: 
             Timestamp precision
             <select
               value={o.normalization.timestamp_precision}
-              onChange={(e) => setNorm({ timestamp_precision: e.target.value as typeof o.normalization.timestamp_precision })}
+              onChange={(e) =>
+                setNorm({ timestamp_precision: e.target.value as typeof o.normalization.timestamp_precision })
+              }
             >
               <option value="microsecond">Microsecond</option>
               <option value="millisecond">Millisecond</option>
@@ -767,9 +931,15 @@ function StepJson({ config, setConfig, name }: { config: JobConfig; setConfig: (
   return (
     <div className="stack">
       <p className="ink-2" style={{ margin: 0 }}>
-        The whole comparison is one JSON document: keep it in Git, review it in pull requests, or paste one here to import it.
+        The whole comparison is one JSON document: keep it in Git, review it in pull requests, or paste one here to
+        import it.
       </p>
-      <textarea className="mono" style={{ minHeight: 360 }} value={draft ?? text} onChange={(e) => setDraft(e.target.value)} />
+      <textarea
+        className="mono"
+        style={{ minHeight: 360 }}
+        value={draft ?? text}
+        onChange={(e) => setDraft(e.target.value)}
+      />
       {error && <div className="alert error">{error}</div>}
       <div className="row">
         <button type="button" onClick={download}>
@@ -792,6 +962,45 @@ function StepJson({ config, setConfig, name }: { config: JobConfig; setConfig: (
 
 // ---------------------------------------------------------------------------
 
+interface Recommendation {
+  title: string;
+  normalization: Partial<JobConfig["options"]["normalization"]>;
+  reasons: string[];
+}
+
+function RecommendationBanner({
+  rec,
+  applied,
+  onApply,
+}: {
+  rec: Recommendation;
+  applied: boolean;
+  onApply: () => void;
+}) {
+  return (
+    <div className="alert banner">
+      <div>
+        <b>{rec.title}</b>
+        {applied && (
+          <span className="pill pass" style={{ marginLeft: 8 }}>
+            ✓ applied
+          </span>
+        )}
+        <ul className="small">
+          {rec.reasons.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      </div>
+      {!applied && (
+        <button className="small" onClick={onApply}>
+          Apply recommended settings
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function JobEditor() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -806,6 +1015,47 @@ export default function JobEditor() {
   const [error, setError] = useState<unknown>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [nameTouched, setNameTouched] = useState(!!id);
+  const [rec, setRec] = useState<Recommendation | null>(null);
+  const [showIssues, setShowIssues] = useState(false);
+  const toast = useToast();
+
+  const applyRec = (r: Recommendation) =>
+    setConfig((c) => ({
+      ...c,
+      options: { ...c.options, normalization: { ...c.options.normalization, ...r.normalization } },
+    }));
+
+  // Platform-specific defaults (Oracle '' = NULL, CHAR padding, ...), applied automatically to new comparisons.
+  useEffect(() => {
+    setRec(null);
+    const { source_connection_id: s, target_connection_id: t } = config;
+    if (!s || !t || !loaded) return;
+    api<Recommendation>(`/preview/recommendations?source_connection_id=${s}&target_connection_id=${t}`).then(
+      (r) => {
+        setRec(r);
+        if (!id) applyRec(r);
+      },
+      () => undefined,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.source_connection_id, config.target_connection_id, loaded]);
+
+  // Suggest a name from the two connections until the user types one.
+  useEffect(() => {
+    if (nameTouched || !conns.data) return;
+    const s = conns.data.find((c) => c.id === config.source_connection_id);
+    const t = conns.data.find((c) => c.id === config.target_connection_id);
+    if (s && t) setName(`${s.name} → ${t.name}`);
+  }, [config.source_connection_id, config.target_connection_id, conns.data, nameTouched]);
+
+  const issues: string[] = [];
+  if (!config.source_connection_id) issues.push("Choose a source connection (step 1).");
+  if (!config.target_connection_id) issues.push("Choose a target connection (step 1).");
+  if (!config.tables.length) issues.push("Add at least one table pair (step 1).");
+  config.tables.forEach((t, i) => {
+    if (!t.source_table || !t.target_table) issues.push(`Table pair ${i + 1} needs both a source and a target table.`);
+  });
 
   useEffect(() => {
     if (!id) return;
@@ -817,21 +1067,29 @@ export default function JobEditor() {
     }, setError);
   }, [id]);
 
-  const update = (c: JobConfig) => {
-    setConfig(c);
+  const update = (next: JobConfig | ((c: JobConfig) => JobConfig)) => {
+    setConfig((prev) => {
+      const c = typeof next === "function" ? next(prev) : next;
+      if (pairIndex >= c.tables.length) setPairIndex(Math.max(0, c.tables.length - 1));
+      return c;
+    });
     setSaved(false);
-    if (pairIndex >= c.tables.length) setPairIndex(Math.max(0, c.tables.length - 1));
   };
   const setPair = (i: number, patch: Partial<TablePair>) =>
     update({ ...config, tables: config.tables.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
 
   const save = async (andRun: boolean) => {
+    if (issues.length) {
+      setShowIssues(true);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const body = { name: name || "Untitled comparison", description, config };
       const job = id ? await api<JobT>(`/jobs/${id}`, { method: "PUT", body }) : await api<JobT>("/jobs", { body });
       setSaved(true);
+      toast(andRun ? "Saved. Starting the comparison…" : "Comparison saved");
       if (andRun) {
         const run = await api(`/jobs/${job.id}/run`, { method: "POST" });
         navigate(`/runs/${run.id}`);
@@ -865,6 +1123,7 @@ export default function JobEditor() {
             placeholder="Comparison name, e.g. Oracle SALES → Databricks"
             onChange={(e) => {
               setName(e.target.value);
+              setNameTouched(true);
               setSaved(false);
             }}
             style={{ fontSize: 20, fontWeight: 650, border: "none", background: "transparent", padding: "2px 0" }}
@@ -894,6 +1153,16 @@ export default function JobEditor() {
         )}
       </div>
       <ErrorBox error={error} />
+      {showIssues && issues.length > 0 && (
+        <div className="alert warn">
+          <b>Almost there:</b>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+            {issues.map((i) => (
+              <li key={i}>{i}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {conns.data.length < 2 && (
         <div className="alert warn">
           You need a source and a target connection. <a href="/connections">Add connections</a> first.
@@ -901,11 +1170,33 @@ export default function JobEditor() {
       )}
       <div className="steps" role="tablist">
         {STEPS.map((s, i) => (
-          <button key={s} role="tab" aria-selected={step === i} className={step === i ? "active" : ""} onClick={() => setStep(i)}>
-            {i + 1}. {s}
+          <button
+            key={s}
+            role="tab"
+            aria-selected={step === i}
+            className={step === i ? "active" : ""}
+            onClick={() => setStep(i)}
+          >
+            {i === 0 && config.tables.length > 0 && config.tables.every((t) => t.source_table && t.target_table)
+              ? "✓"
+              : `${i + 1}.`}{" "}
+            {s}
           </button>
         ))}
       </div>
+      {rec && (step === 0 || step === 3) && (
+        <RecommendationBanner
+          rec={rec}
+          applied={Object.entries(rec.normalization).every(
+            ([k, v]) => config.options.normalization[k as keyof typeof config.options.normalization] === v,
+          )}
+          onApply={() => {
+            applyRec(rec);
+            setSaved(false);
+            toast("Recommended settings applied");
+          }}
+        />
+      )}
       {step === 0 && <StepTables config={config} setConfig={update} conns={conns.data} />}
       {step === 1 && <StepColumns config={config} setPair={setPair} index={pairIndex} setIndex={setPairIndex} />}
       {step === 2 && <StepRules config={config} setPair={setPair} index={pairIndex} setIndex={setPairIndex} />}

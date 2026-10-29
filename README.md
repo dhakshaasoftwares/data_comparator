@@ -14,6 +14,23 @@ questions every migration team has to sign off on:
 | Is the data good? | Data quality rules: not null, unique, range, regex, allowed values, max length, custom SQL expressions, each with severity and tolerated % |
 | Can we go live? | One explainable **readiness score (0–100)** per table and per run, with weights and pass/warn thresholds you configure and a list of exactly why points were lost |
 
+It is built to be usable without knowing every platform's quirks:
+
+* **What to fix, in plain language.** Every difference is classified (letter case only, spaces, text
+  cut off, rounding, sign reversed, time-zone shift, time of day lost, NULL in target, ...) and turned
+  into a finding such as *"AMOUNT: numbers are rounded in the target — the target type DECIMAL(10,1)
+  keeps fewer decimals"*. Many findings carry a one-click fix (*Ignore letter case & re-run*,
+  *Accept differences up to 0.05 & re-run*, *Exclude these columns*).
+* **Keys found for you.** Hive, Parquet, Snowflake and Databricks tables rarely declare a primary
+  key; a unique, never-NULL column is detected automatically so rows can still be matched one-to-one.
+* **Recommended settings per platform pair** (Oracle `'' = NULL`, CHAR padding, SQL Server
+  millisecond timestamps, Spark session time zones) are applied when you pick the connections, and
+  tables with the same name are paired automatically.
+* **Errors you can act on.** Connection and run failures come with a hint (unreachable host,
+  sign-in rejected, wrong Oracle service name, Snowflake account format, missing table or path).
+* Score change since the previous run, table filters/search for comparisons with hundreds of tables,
+  duplicate a comparison (e.g. for another environment), a getting-started checklist and inline help.
+
 Everything is configured from the UI (connections, table pairs, keys, column mappings, filters,
 rules, tolerances, weights). Each comparison is also a single JSON document, so it can be kept
 in Git and run from CI/CD through the REST API.
@@ -23,6 +40,8 @@ in Git and run from CI/CD through the REST API.
 | ![Dashboard](docs/images/dashboard.png) | ![Run report](docs/images/run-report.png) |
 | **Column mapping & type compatibility** | **Value differences** |
 | ![Column mapping](docs/images/column-mapping.png) | ![Data differences](docs/images/data-differences.png) |
+| **New comparison: recommended settings, tables paired by name** | |
+| ![New comparison](docs/images/new-comparison.png) | |
 
 ---
 
@@ -60,7 +79,7 @@ npm install
 npm run dev        # http://localhost:3000, proxies /api to :8000
 ```
 
-Tests: `cd backend && pytest` · Lint: `ruff check app tests` · UI types: `cd frontend && npm run typecheck`
+Tests: `cd backend && pytest` · Lint: `ruff check app tests` · UI: `cd frontend && npm run typecheck && npm run format:check`
 
 ---
 

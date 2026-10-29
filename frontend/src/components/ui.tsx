@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { fmtScore } from "../api";
 
 const STATUS_LABEL: Record<string, [string, string]> = {
@@ -31,7 +31,13 @@ export function StatusPill({ status, label }: { status: string | null | undefine
 
 export function Score({ value, status }: { value: number | null | undefined; status?: string | null }) {
   const color =
-    status === "pass" ? "var(--good-ink)" : status === "warn" ? "var(--warning-ink)" : status ? "var(--critical-ink)" : undefined;
+    status === "pass"
+      ? "var(--good-ink)"
+      : status === "warn"
+        ? "var(--warning-ink)"
+        : status
+          ? "var(--critical-ink)"
+          : undefined;
   return (
     <span className="score" style={{ color }}>
       {fmtScore(value)}
@@ -75,7 +81,11 @@ export function ErrorBox({ error }: { error: unknown }) {
 }
 
 export function Loading() {
-  return <div className="muted" style={{ padding: 24 }}>Loading…</div>;
+  return (
+    <div className="muted" style={{ padding: 24 }}>
+      Loading…
+    </div>
+  );
 }
 
 /** Load data on mount; `reload` re-fetches while keeping the previous data on screen. */
@@ -100,4 +110,62 @@ export function useData<T>(loader: () => Promise<T>, deps: unknown[] = []) {
     reload();
   }, [reload]);
   return { data, error, loading, reload, setData };
+}
+
+/** Small "?" that explains a term on hover and keyboard focus. */
+export function Help({ text }: { text: string }) {
+  return (
+    <span className="help-tip" tabIndex={0} role="note" aria-label={text} data-tip={text}>
+      ?
+    </span>
+  );
+}
+
+/** Change of score since the previous run of the same comparison. */
+export function ScoreDelta({
+  score,
+  previous,
+}: {
+  score: number | null | undefined;
+  previous: number | null | undefined;
+}) {
+  if (score === null || score === undefined || previous === null || previous === undefined) return null;
+  const d = score - previous;
+  if (Math.abs(d) < 0.05) return <span className="delta same">no change</span>;
+  return (
+    <span className={`delta ${d > 0 ? "up" : "down"}`} title={`Previous run: ${fmtScore(previous)}`}>
+      {d > 0 ? "▲" : "▼"} {Math.abs(d).toFixed(1)}
+    </span>
+  );
+}
+
+// ---- toasts ------------------------------------------------------------------
+
+type Toast = { id: number; text: string; kind: "ok" | "error" };
+const ToastContext = createContext<(text: string, kind?: Toast["kind"]) => void>(() => {});
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const next = useRef(1);
+  const show = useCallback((text: string, kind: Toast["kind"] = "ok") => {
+    const id = next.current++;
+    setToasts((t) => [...t, { id, text, kind }]);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+  }, []);
+  return (
+    <ToastContext.Provider value={show}>
+      {children}
+      <div className="toasts" role="status" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.kind}`}>
+            {t.kind === "ok" ? "✓" : "✕"} {t.text}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export function useToast() {
+  return useContext(ToastContext);
 }

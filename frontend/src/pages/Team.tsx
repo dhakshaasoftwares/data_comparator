@@ -91,7 +91,12 @@ export default function Team() {
           <div className="form-grid">
             <label className="field">
               Email
-              <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              <input
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
             </label>
             <label className="field">
               Name

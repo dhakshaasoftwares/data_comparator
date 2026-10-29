@@ -43,7 +43,9 @@ function FieldInput({
         placeholder={placeholder}
         required={field.required && !(field.secret && stored)}
         autoComplete={field.type === "password" ? "new-password" : "off"}
-        onChange={(e) => onChange(field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
+        onChange={(e) =>
+          onChange(field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)
+        }
       />
     );
   return (
@@ -69,10 +71,12 @@ function ConnectionForm({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [type, setType] = useState<ConnectorType | null>(existing ? types.find((t) => t.type === existing.type) || null : null);
+  const [type, setType] = useState<ConnectorType | null>(
+    existing ? types.find((t) => t.type === existing.type) || null : null,
+  );
   const [name, setName] = useState(existing?.name || "");
   const [config, setConfig] = useState<Record<string, any>>(existing?.config || {});
-  const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [test, setTest] = useState<{ ok: boolean; message: string; hint?: string | null } | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -113,6 +117,16 @@ function ConnectionForm({
     }
   };
 
+  const field = (f: ConfigField) => (
+    <FieldInput
+      key={f.name}
+      field={f}
+      value={config[f.name]}
+      stored={!!existing?.secrets_set.includes(f.name)}
+      onChange={(v) => setConfig({ ...config, [f.name]: v })}
+    />
+  );
+
   const grouped = useMemo(
     () => CATEGORY_ORDER.map((c) => [c, types.filter((t) => t.category === c)] as const).filter(([, l]) => l.length),
     [types],
@@ -129,7 +143,9 @@ function ConnectionForm({
                 {list.map((t) => (
                   <button key={t.type} className="type-card" onClick={() => pick(t)}>
                     <div style={{ fontWeight: 600 }}>{t.label}</div>
-                    <div className="cat">{t.driver_installed ? t.description || t.category : `Driver needed: ${t.driver_hint}`}</div>
+                    <div className="cat">
+                      {t.driver_installed ? t.description || t.category : `Driver needed: ${t.driver_hint}`}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -144,8 +160,8 @@ function ConnectionForm({
       <form onSubmit={save} className="stack">
         {!type.driver_installed && (
           <div className="alert warn">
-            The server does not have the driver for {type.label}. Install it with <code>pip install {type.driver_hint}</code>{" "}
-            (or use the Docker image with all connectors).
+            The server does not have the driver for {type.label}. Install it with{" "}
+            <code>pip install {type.driver_hint}</code> (or use the Docker image with all connectors).
           </div>
         )}
         {type.description && <div className="ink-2">{type.description}</div>}
@@ -154,17 +170,31 @@ function ConnectionForm({
             Connection name
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
-          {type.fields.map((f) => (
-            <FieldInput
-              key={f.name}
-              field={f}
-              value={config[f.name]}
-              stored={!!existing?.secrets_set.includes(f.name)}
-              onChange={(v) => setConfig({ ...config, [f.name]: v })}
-            />
-          ))}
+          {type.fields.filter((f) => !f.advanced).map(field)}
         </div>
-        {test && <div className={`alert ${test.ok ? "ok" : "error"}`}>{test.message}</div>}
+        {type.fields.some((f) => f.advanced) && (
+          <details
+            open={type.fields.some(
+              (f) =>
+                f.advanced &&
+                ((config[f.name] && config[f.name] !== f.default) || existing?.secrets_set.includes(f.name)),
+            )}
+          >
+            <summary>Advanced options & cloud credentials</summary>
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              {type.fields.filter((f) => f.advanced).map(field)}
+            </div>
+          </details>
+        )}
+        {test && (
+          <div className={`alert ${test.ok ? "ok" : "error"}`}>
+            {test.ok ? "✓ " : <b>Could not connect. </b>}
+            {test.hint ? <div style={{ margin: "4px 0" }}>{test.hint}</div> : null}
+            <span className={test.ok ? "" : "small"} style={test.ok ? undefined : { opacity: 0.85 }}>
+              {test.ok ? test.message : `Details: ${test.message}`}
+            </span>
+          </div>
+        )}
         <ErrorBox error={error} />
         <div className="spread">
           {!existing ? (
@@ -212,7 +242,9 @@ export default function Connections() {
       <div className="page-head">
         <div>
           <h1>Connections</h1>
-          <p>Sources and targets: databases, warehouses, Hive/Spark and data-lake files. Secrets are encrypted at rest.</p>
+          <p>
+            Sources and targets: databases, warehouses, Hive/Spark and data-lake files. Secrets are encrypted at rest.
+          </p>
         </div>
         {canEdit && (
           <button className="primary" onClick={() => setEditing("new")} disabled={!types.data}>

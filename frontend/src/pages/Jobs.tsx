@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, fmtDate, type ConnectionT, type JobT } from "../api";
 import { useAuth } from "../auth";
-import { Empty, ErrorBox, Loading, Score, StatusPill, useData } from "../components/ui";
+import { Empty, ErrorBox, Loading, Score, ScoreDelta, StatusPill, useData, useToast } from "../components/ui";
 
 export default function Jobs() {
   const { canEdit } = useAuth();
@@ -13,6 +13,17 @@ export default function Jobs() {
   const [starting, setStarting] = useState<number | null>(null);
 
   const connName = (id: number) => conns.data?.find((c) => c.id === id)?.name || `#${id}`;
+
+  const toast = useToast();
+  const duplicate = async (job: JobT) => {
+    try {
+      const copy = await api<JobT>(`/jobs/${job.id}/duplicate`, { method: "POST" });
+      toast(`Created “${copy.name}”`);
+      navigate(`/jobs/${copy.id}`);
+    } catch (e) {
+      setError(e);
+    }
+  };
 
   const run = async (job: JobT) => {
     setStarting(job.id);
@@ -82,7 +93,9 @@ export default function Jobs() {
                           ) : (
                             <StatusPill status={j.last_run.status} />
                           )}
-                          <span className="muted small">{fmtDate(j.last_run.finished_at || j.last_run.created_at)}</span>
+                          <span className="muted small">
+                            {fmtDate(j.last_run.finished_at || j.last_run.created_at)}
+                          </span>
                         </Link>
                       ) : (
                         <span className="muted">Never</span>
@@ -90,12 +103,24 @@ export default function Jobs() {
                     </td>
                     <td className="r">
                       <Score value={j.last_run?.score} status={j.last_run?.result_status} />
+                      <div>
+                        <ScoreDelta score={j.last_run?.score} previous={j.last_run?.previous_score} />
+                      </div>
                     </td>
                     <td className="r">
                       {canEdit && (
-                        <button className="small primary" onClick={() => run(j)} disabled={starting === j.id}>
-                          {starting === j.id ? "Starting…" : "Run now"}
-                        </button>
+                        <div className="row" style={{ justifyContent: "flex-end", flexWrap: "nowrap" }}>
+                          <button
+                            className="small"
+                            onClick={() => duplicate(j)}
+                            title="Copy this comparison, e.g. for another environment"
+                          >
+                            Duplicate
+                          </button>
+                          <button className="small primary" onClick={() => run(j)} disabled={starting === j.id}>
+                            {starting === j.id ? "Starting…" : "Run now"}
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>

@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, fmtDate, fmtNum, type RunT, type Status } from "../api";
 import { useAuth } from "../auth";
 import { ScoreTrend, StatusStack } from "../components/charts";
-import { Empty, ErrorBox, Loading, Score, StatusPill, useData } from "../components/ui";
+import { ErrorBox, Loading, Score, StatusPill, useData } from "../components/ui";
 
 interface DashboardData {
   kpis: {
@@ -26,7 +26,14 @@ interface DashboardData {
     top_issue: string | null;
   }[];
   recent_runs: RunT[];
-  jobs: { id: number; name: string; score: number | null; status: Status | null; last_run_at: string | null; tables: number }[];
+  jobs: {
+    id: number;
+    name: string;
+    score: number | null;
+    status: Status | null;
+    last_run_at: string | null;
+    tables: number;
+  }[];
 }
 
 function statusOf(score: number | null): Status | null {
@@ -41,7 +48,7 @@ export default function Dashboard() {
 
   if (!data) return error ? <ErrorBox error={error} /> : <Loading />;
   const k = data.kpis;
-  const empty = k.jobs === 0;
+  const empty = k.runs_total === 0;
 
   return (
     <div className="stack" style={{ opacity: loading ? 0.7 : 1 }}>
@@ -60,16 +67,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {empty ? (
-        <div className="card">
-          <Empty title="No comparisons yet">
-            <p>Connect a source and a target, then create a comparison to see scores here.</p>
-            <Link className="btn primary" to="/jobs/new">
-              Create a comparison
-            </Link>
-          </Empty>
-        </div>
-      ) : (
+      {k.runs_total === 0 && <GettingStarted k={k} />}
+      {empty ? null : (
         <>
           <div className="grid cols-4">
             <div className="card stat">
@@ -108,7 +107,12 @@ export default function Dashboard() {
                 <ScoreTrend
                   pass={95}
                   warn={80}
-                  points={data.trend.map((t) => ({ label: `Run #${t.run_id}`, sub: t.job_name, value: t.score, at: t.at }))}
+                  points={data.trend.map((t) => ({
+                    label: `Run #${t.run_id}`,
+                    sub: t.job_name,
+                    value: t.score,
+                    at: t.at,
+                  }))}
                 />
               ) : (
                 <div className="muted">Run a comparison to start the trend.</div>
@@ -149,7 +153,11 @@ export default function Dashboard() {
                 </thead>
                 <tbody>
                   {data.worst_tables.map((t) => (
-                    <tr key={`${t.run_id}-${t.source_table}`} className="clickable" onClick={() => navigate(`/runs/${t.run_id}`)}>
+                    <tr
+                      key={`${t.run_id}-${t.source_table}`}
+                      className="clickable"
+                      onClick={() => navigate(`/runs/${t.run_id}`)}
+                    >
                       <td>
                         <code>{t.source_table}</code> → <code>{t.target_table}</code>
                       </td>
@@ -183,9 +191,72 @@ export default function Dashboard() {
   );
 }
 
+function GettingStarted({ k }: { k: DashboardData["kpis"] }) {
+  const steps = [
+    {
+      done: k.connections >= 1,
+      title: "Connect your source system",
+      text: "The platform you are migrating from: Oracle, Hive, Redshift, Teradata, files…",
+      to: "/connections",
+      action: "Add connection",
+    },
+    {
+      done: k.connections >= 2,
+      title: "Connect your target system",
+      text: "Where the data now lives: Databricks, Snowflake, Spark Parquet on S3/ADLS…",
+      to: "/connections",
+      action: "Add connection",
+    },
+    {
+      done: k.jobs >= 1,
+      title: "Create a comparison",
+      text: "Pick both connections; tables with the same name are paired and sensible settings applied for you.",
+      to: "/jobs/new",
+      action: "New comparison",
+    },
+    {
+      done: k.runs_total >= 1,
+      title: "Run it and fix what it finds",
+      text: "You get a readiness score per table and plain-language findings, many with a one-click fix.",
+      to: "/jobs",
+      action: "Go to comparisons",
+    },
+  ];
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Get started in 4 steps</h2>
+        <span className="small muted">{steps.filter((s) => s.done).length} of 4 done</span>
+      </div>
+      <ol className="checklist">
+        {steps.map((s, i) => (
+          <li key={s.title} className={s.done ? "done" : ""}>
+            <span className="num-badge">{s.done ? "✓" : i + 1}</span>
+            <div>
+              <div className="step-title">{s.title}</div>
+              <div className="small ink-2">{s.text}</div>
+            </div>
+            {i === next && (
+              <Link className="btn primary small" to={s.to}>
+                {s.action}
+              </Link>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export function RunsTable({ runs }: { runs: RunT[] }) {
   const navigate = useNavigate();
-  if (!runs.length) return <div className="muted" style={{ padding: 18 }}>No runs yet.</div>;
+  if (!runs.length)
+    return (
+      <div className="muted" style={{ padding: 18 }}>
+        No runs yet.
+      </div>
+    );
   return (
     <div className="table-wrap">
       <table>
@@ -216,11 +287,7 @@ export function RunsTable({ runs }: { runs: RunT[] }) {
                 <Score value={r.score} status={r.result_status} />
               </td>
               <td>
-                {r.status === "completed" ? (
-                  <StatusPill status={r.result_status} />
-                ) : (
-                  <StatusPill status={r.status} />
-                )}
+                {r.status === "completed" ? <StatusPill status={r.result_status} /> : <StatusPill status={r.status} />}
               </td>
             </tr>
           ))}
@@ -229,4 +296,3 @@ export function RunsTable({ runs }: { runs: RunT[] }) {
     </div>
   );
 }
-

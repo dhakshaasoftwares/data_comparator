@@ -37,14 +37,16 @@ class FilesConnector(Connector):
             ),
             ConfigField("format", "Format", "select", default="parquet", options=FORMATS),
             ConfigField("hive_partitioning", "Hive-style partition folders (col=value)", "boolean", default=True),
-            ConfigField("csv_delimiter", "CSV delimiter", default=","),
-            ConfigField("s3_region", "S3 region"),
-            ConfigField("s3_access_key_id", "S3 access key ID"),
-            ConfigField("s3_secret_access_key", "S3 secret access key", "password", secret=True),
-            ConfigField("s3_endpoint", "S3 endpoint (MinIO / custom)"),
-            ConfigField("azure_connection_string", "Azure storage connection string", "password", secret=True),
-            ConfigField("gcs_hmac_key_id", "GCS HMAC key ID"),
-            ConfigField("gcs_hmac_secret", "GCS HMAC secret", "password", secret=True),
+            ConfigField("csv_delimiter", "CSV delimiter", default=",", advanced=True),
+            ConfigField("s3_region", "S3 region", advanced=True),
+            ConfigField("s3_access_key_id", "S3 access key ID", advanced=True),
+            ConfigField("s3_secret_access_key", "S3 secret access key", "password", secret=True, advanced=True),
+            ConfigField("s3_endpoint", "S3 endpoint (MinIO / custom)", advanced=True),
+            ConfigField(
+                "azure_connection_string", "Azure storage connection string", "password", secret=True, advanced=True
+            ),
+            ConfigField("gcs_hmac_key_id", "GCS HMAC key ID", advanced=True),
+            ConfigField("gcs_hmac_secret", "GCS HMAC secret", "password", secret=True, advanced=True),
         ],
     )
 

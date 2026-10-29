@@ -49,8 +49,23 @@ class QualityRule(BaseModel):
     def label(self) -> str:
         if self.name:
             return self.name
-        target = self.column or ", ".join(self.columns) or self.expression or ""
-        return f"{self.type}({target})"
+        c = self.column or ""
+        t = self.type
+        if t == "not_null":
+            return f"{c} is filled in"
+        if t == "unique":
+            return f"{', '.join(self.columns) or c} is unique"
+        if t == "range":
+            if self.min is not None and self.max is not None:
+                return f"{c} between {self.min:g} and {self.max:g}"
+            return f"{c} ≥ {self.min:g}" if self.min is not None else f"{c} ≤ {self.max:g}"
+        if t == "regex":
+            return f"{c} matches the expected format"
+        if t == "allowed_values":
+            return f"{c} has an allowed value"
+        if t == "max_length":
+            return f"{c} at most {self.length} characters"
+        return self.expression or t
 
 
 class TablePair(BaseModel):

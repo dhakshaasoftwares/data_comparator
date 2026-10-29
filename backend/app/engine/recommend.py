@@ -21,7 +21,7 @@ PLATFORM_NAMES = {
 
 def recommend(source_dialect: str, target_dialect: str) -> dict:
     """Normalisation settings plus the reasons, in plain language."""
-    norm: dict = {"trim_strings": True, "null_equals_empty": False, "timestamp_precision": "microsecond"}
+    norm: dict = {"trim_strings": True}  # only settings that should be switched on for this pair
     reasons: list[str] = []
     s, t = source_dialect, target_dialect
     pair = {s, t}

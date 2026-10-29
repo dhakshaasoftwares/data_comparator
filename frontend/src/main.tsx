@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import Layout from "./components/Layout";
-import { Loading } from "./components/ui";
+import { Loading, ToastProvider } from "./components/ui";
 import Billing from "./pages/Billing";
 import Connections from "./pages/Connections";
 import Dashboard from "./pages/Dashboard";
@@ -33,30 +33,32 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login mode="login" />} />
-          <Route path="/register" element={<Login mode="register" />} />
-          <Route
-            element={
-              <RequireAuth>
-                <Layout />
-              </RequireAuth>
-            }
-          >
-            <Route index element={<Dashboard />} />
-            <Route path="jobs" element={<Jobs />} />
-            <Route path="jobs/new" element={<JobEditor />} />
-            <Route path="jobs/:id" element={<JobEditor />} />
-            <Route path="runs" element={<Runs />} />
-            <Route path="runs/:id" element={<RunDetail />} />
-            <Route path="connections" element={<Connections />} />
-            <Route path="team" element={<Team />} />
-            <Route path="billing" element={<Billing />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login mode="login" />} />
+            <Route path="/register" element={<Login mode="register" />} />
+            <Route
+              element={
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="jobs" element={<Jobs />} />
+              <Route path="jobs/new" element={<JobEditor />} />
+              <Route path="jobs/:id" element={<JobEditor />} />
+              <Route path="runs" element={<Runs />} />
+              <Route path="runs/:id" element={<RunDetail />} />
+              <Route path="connections" element={<Connections />} />
+              <Route path="team" element={<Team />} />
+              <Route path="billing" element={<Billing />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </ToastProvider>
     </AuthProvider>
   </StrictMode>,
 );

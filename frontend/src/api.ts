@@ -65,6 +65,7 @@ export interface ConfigField {
   help: string;
   options: string[];
   secret: boolean;
+  advanced: boolean;
 }
 
 export interface ConnectorType {
@@ -152,6 +153,7 @@ export interface RunT {
   summary: any;
   result?: any;
   config?: JobConfig;
+  previous_score?: number | null;
 }
 
 export interface JobT {
@@ -202,4 +204,45 @@ export function fmtDate(s: string | null | undefined): string {
 
 export function fmtScore(s: number | null | undefined): string {
   return s === null || s === undefined ? "–" : s.toFixed(1);
+}
+
+// ---- insights & one-click fixes --------------------------------------------------
+
+export interface Fix {
+  kind: "option" | "table";
+  label: string;
+  path?: string[];
+  value?: unknown;
+  patch?: Partial<TablePair>;
+}
+
+export interface Insight {
+  level: "critical" | "warning" | "info";
+  title: string;
+  detail: string;
+  column?: string;
+  fix?: Fix;
+  source_table: string;
+  target_table: string;
+}
+
+/** Apply a suggested fix to the comparison's saved configuration, then start a new run. */
+export async function applyFixAndRun(jobId: number, fix: Fix, table: { source_table: string; target_table: string }) {
+  const job = await api<JobT>(`/jobs/${jobId}`);
+  const config: JobConfig = JSON.parse(JSON.stringify(job.config));
+  if (fix.kind === "option" && fix.path) {
+    let node: any = config.options;
+    fix.path.slice(0, -1).forEach((k) => (node = node[k]));
+    node[fix.path[fix.path.length - 1]] = fix.value;
+  } else if (fix.kind === "table" && fix.patch) {
+    const pair = config.tables.find(
+      (t) => t.source_table === table.source_table && t.target_table === table.target_table,
+    );
+    if (!pair) throw new Error("This table is no longer part of the comparison");
+    if (fix.patch.exclude_columns)
+      pair.exclude_columns = Array.from(new Set([...pair.exclude_columns, ...fix.patch.exclude_columns]));
+    else Object.assign(pair, fix.patch);
+  }
+  await api(`/jobs/${jobId}`, { method: "PUT", body: { name: job.name, description: job.description, config } });
+  return api<RunT>(`/jobs/${jobId}/run`, { method: "POST" });
 }

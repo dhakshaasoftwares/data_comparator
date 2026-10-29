@@ -12,8 +12,14 @@ export interface TrendPoint {
 export function ScoreTrend({ points, pass, warn }: { points: TrendPoint[]; pass: number; warn: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 640, H = 220, L = 34, R = 12, T = 12, B = 26;
-  const iw = W - L - R, ih = H - T - B;
+  const W = 640,
+    H = 220,
+    L = 34,
+    R = 12,
+    T = 12,
+    B = 26;
+  const iw = W - L - R,
+    ih = H - T - B;
   const x = (i: number) => L + (points.length <= 1 ? iw / 2 : (i * iw) / (points.length - 1));
   const y = (v: number) => T + ih - (v / 100) * ih;
   const path = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
@@ -54,7 +60,13 @@ export function ScoreTrend({ points, pass, warn }: { points: TrendPoint[]; pass:
         {hp && <line className="crosshair" x1={x(hover!)} x2={x(hover!)} y1={T} y2={T + ih} />}
         <path className="series" d={path} />
         {points.map((p, i) => (
-          <circle key={i} className="dot" cx={x(i)} cy={y(p.value)} r={hover === i ? 5 : points.length > 20 ? 0 : 3.5} />
+          <circle
+            key={i}
+            className="dot"
+            cx={x(i)}
+            cy={y(p.value)}
+            r={hover === i ? 5 : points.length > 20 ? 0 : 3.5}
+          />
         ))}
         {points.length > 0 && (
           <text className="tick" x={x(points.length - 1)} y={y(points[points.length - 1].value) - 10} textAnchor="end">

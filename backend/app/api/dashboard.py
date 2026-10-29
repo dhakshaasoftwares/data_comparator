@@ -44,9 +44,9 @@ def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db))
                     "target_table": t["target_table"],
                     "score": t.get("score"),
                     "status": t.get("status"),
-                    "top_issue": (t.get("deductions") or [{}])[0].get("reason")
-                    if t.get("deductions")
-                    else t.get("error"),
+                    "top_issue": (t.get("insights") or [{}])[0].get("title")
+                    or ((t.get("deductions") or [{}])[0].get("reason"))
+                    or t.get("error"),
                 }
             )
     scores = [r.score for r in latest.values() if r.score is not None]

@@ -370,7 +370,7 @@ class HiveConnector(SQLAlchemyConnector):
             ConfigField(
                 "auth", "Authentication", "select", default="NONE", options=["NONE", "LDAP", "KERBEROS", "CUSTOM"]
             ),
-            ConfigField("kerberos_service_name", "Kerberos service name", placeholder="hive"),
+            ConfigField("kerberos_service_name", "Kerberos service name", placeholder="hive", advanced=True),
         ],
     )
 
@@ -458,7 +458,7 @@ class SQLServerConnector(SQLAlchemyConnector):
         fields=_host_fields(1433)
         + [
             ConfigField("schema", "Schema", default="dbo"),
-            ConfigField("odbc_driver", "ODBC driver", default="ODBC Driver 18 for SQL Server"),
+            ConfigField("odbc_driver", "ODBC driver", default="ODBC Driver 18 for SQL Server", advanced=True),
         ],
     )
 
@@ -573,6 +573,7 @@ class GenericSQLAlchemyConnector(SQLAlchemyConnector):
                 "select",
                 default="generic",
                 options=["generic", "oracle", "snowflake", "databricks", "hive", "redshift", "postgres"],
+                advanced=True,
             ),
         ],
     )
